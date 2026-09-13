@@ -9,17 +9,34 @@ That's the whole app.
 
 ## The rules
 
-Two constraints keep it from suggesting the same three places forever:
+Three constraints keep it from marching you to the same three places forever:
 
-- **Cooldown** — a place can't come back for 2 days after you eat there.
-- **Weekly cap** — no more than 3 times in any rolling 7 days.
+- **Repeat cooldown** — a place can't come back until another lunch has passed.
+- **Frequency cap** — no more than 3 times in your last 5 lunches.
+- **Long walks** — never three long walks in a row.
 
-Both are adjustable under **Rules**.
+Each place is tagged with a walking time: under 5 min, 5–10, or over 10. Tap the
+pill in **Places** to change it. All three numbers are adjustable under **Rules**.
 
-When your list is too short to satisfy both, the app doesn't refuse to answer —
-it bends one rule at a time and tells you on the card (`Bending the 3× weekly cap`,
-then `Inside the 2-day cooldown`). If you see that most days, add more places.
-Eight to twelve is the comfortable range; under six and it will complain constantly.
+### Days you skip do not exist
+
+Every rule counts **logged lunches, not calendar days**. If you don't use the app
+on Tuesday, Tuesday isn't a gap — Monday's lunch is still "your last lunch" when
+you open it on Wednesday. Nothing decays while you're away, so taking a week off
+doesn't quietly reset your cooldowns.
+
+Marking a day **Not eating out** is the same: it's invisible to every rule.
+
+### When everything is blocked
+
+With a short list all your options can get blocked at once. Rather than refuse to
+answer, the app bends one rule at a time and tells you which on the card —
+the frequency cap first, then the long-walk streak, and the repeat cooldown last,
+because walking far again is a smaller insult than eating the same thing twice
+running.
+
+If you see that most days, add more places. Eight to twelve is comfortable; under
+six and it will complain constantly.
 
 ## Things that matter more than they sound
 
@@ -61,6 +78,19 @@ Free, entirely on-device, takes two minutes:
 Your phone opens the app at lunchtime. If having it take over the screen is too
 much, leave **Notify When Run** on instead and you'll get a tappable banner.
 
+## A desktop launcher (macOS)
+
+`tools/make-launcher.sh` builds a double-clickable **Lunch Call.app** with the app
+icon. It opens Chrome in app mode — no tabs, no address bar, just the app — and
+falls back to your default browser if Chrome isn't installed.
+
+```bash
+bash tools/make-launcher.sh                      # onto your Desktop
+bash tools/make-launcher.sh "$URL" /Applications # or anywhere
+```
+
+Drag it to your Dock and it behaves like any other app.
+
 ## Run it yourself
 
 It is one static HTML file with no build step and no dependencies.
@@ -75,8 +105,9 @@ To host your own copy: fork it, then **Settings → Pages → Source: deploy fro
 branch `main`, folder `/ (root)`**.
 
 The app also runs as a Claude Artifact, where it uses account-backed storage so
-one person's phone and laptop stay in sync. That variant is this same file minus
-the `<!doctype>`/`<head>`/`<body>` shell, which the artifact runtime supplies.
+one person's phone and laptop stay in sync. `tools/build-artifact.py` generates
+that variant — the same file with our document shell and service worker stripped,
+since the artifact runtime supplies its own.
 
 ## License
 

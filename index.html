@@ -94,6 +94,7 @@ button{font:inherit; color:inherit; cursor:pointer; border:0; background:none}
   font-variant-numeric:tabular-nums; white-space:nowrap;
 }
 .chip.warn{background:var(--accent-soft); color:var(--accent); border-color:transparent; font-weight:500}
+.chip.walk{background:transparent; border-color:var(--rule); color:var(--ink-2)}
 .hint{font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); margin:18px 0 0; text-align:center}
 
 /* swipe veils */
@@ -168,6 +169,11 @@ textarea::placeholder{color:var(--ink-3)}
 .mini{font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); padding:5px 7px; border-radius:7px; border:1px solid var(--rule-2); flex-shrink:0}
 .mini:hover{color:var(--ink); border-color:var(--rule)}
 .mini.danger:hover{color:var(--no); border-color:var(--no-line); background:var(--no-soft)}
+.mini.walk{min-width:52px; text-align:center; font-variant-numeric:tabular-nums; color:var(--ink-2)}
+.mini.walk.long{color:var(--accent); border-color:var(--accent-soft); background:var(--accent-soft)}
+.seg{display:flex; border:1px solid var(--rule); border-radius:9px; overflow:hidden; flex-shrink:0}
+.seg button{padding:8px 11px; font-family:var(--mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-3)}
+.seg button.on{background:var(--accent); color:var(--accent-ink); font-weight:700}
 
 .addbar{display:flex; gap:8px; margin-bottom:6px}
 .addbar input{flex:1; padding:11px 12px; border-radius:10px; border:1px solid var(--rule); background:var(--card); color:var(--ink); font:inherit; font-size:14.5px; min-width:0}
@@ -191,6 +197,10 @@ textarea::placeholder{color:var(--ink-3)}
 .day-d{font-family:var(--mono); font-size:10.5px; color:var(--ink-3); width:62px; flex-shrink:0; letter-spacing:.02em}
 .day-n{font-size:14.5px; font-weight:500; overflow-wrap:anywhere}
 .day-n.skip{color:var(--ink-3); font-weight:400; font-style:italic}
+.day{justify-content:flex-start}
+.day-n{flex:1}
+.day-w{font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; color:var(--ink-3); border:1px solid var(--rule-2); border-radius:999px; padding:2px 7px; flex-shrink:0; white-space:nowrap}
+.day-w.long{color:var(--accent); border-color:var(--accent-soft); background:var(--accent-soft)}
 
 .toast{
   position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:40;
@@ -244,18 +254,28 @@ function weekday(s){ var p=s.split("-"); return new Date(+p[0],+p[1]-1,+p[2]).to
 function ago(n){ return n===0?"today":n===1?"yesterday":n+" days ago"; }
 
 /* ---------- state ---------- */
-var state = { items:[], log:[], days:{}, settings:{ minGap:2, maxPerWeek:3 } };
+function DEFAULTS(){
+  return { gapMeals:1,        /* other lunches that must pass before a repeat */
+           maxPer:3,          /* at most this many ... */
+           windowMeals:5,     /* ... in your last N lunches */
+           maxLongRun:2,      /* block a long walk once this many ran back to back */
+           longFrom:"10" };   /* "10" = 5-10 min counts as long, "far" = only >10 */
+}
+function clamp(v, lo, hi, dflt){ v = +v; return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt; }
+var state = { items:[], log:[], days:{}, settings:DEFAULTS() };
 var view = today();
 var db = null, lastPushed = "";
 
 function normalize(o){
   o = o || {};
-  var s = { items:[], log:[], days:{}, settings:{ minGap:2, maxPerWeek:3 } };
+  var s = { items:[], log:[], days:{}, settings:DEFAULTS() };
   if(Array.isArray(o.items)) s.items = o.items.filter(function(i){ return i && i.name; }).map(function(i){
-    return { id:i.id||uid(), name:String(i.name).slice(0,80), tags:Array.isArray(i.tags)?i.tags:[], rejects:+i.rejects||0, archived:!!i.archived };
+    return { id:i.id||uid(), name:String(i.name).slice(0,80), tags:Array.isArray(i.tags)?i.tags:[],
+             walk:WALK_ORDER.indexOf(i.walk)>=0 ? i.walk : "10",
+             rejects:+i.rejects||0, archived:!!i.archived };
   });
   if(Array.isArray(o.log)) s.log = o.log.filter(function(e){ return e && e.date && e.itemId; })
-    .map(function(e){ return { date:e.date, itemId:e.itemId, name:e.name||"" }; })
+    .map(function(e){ return { date:e.date, itemId:e.itemId, name:e.name||"", walk:e.walk||null }; })
     .sort(function(a,b){ return a.date<b.date?1:-1; }).slice(0,400);
   if(o.days && typeof o.days==="object"){
     var keep = shift(today(),-45);
@@ -264,8 +284,13 @@ function normalize(o){
     });
   }
   if(o.settings){
-    s.settings.minGap = Math.min(7, Math.max(0, +o.settings.minGap||2));
-    s.settings.maxPerWeek = Math.min(7, Math.max(1, +o.settings.maxPerWeek||3));
+    var d = DEFAULTS(), c = o.settings;
+    s.settings.gapMeals    = clamp(c.gapMeals,    0, 6, d.gapMeals);
+    s.settings.maxPer      = clamp(c.maxPer,      1, 9, d.maxPer);
+    s.settings.windowMeals = clamp(c.windowMeals, 2, 20, d.windowMeals);
+    s.settings.maxLongRun  = clamp(c.maxLongRun,  1, 6, d.maxLongRun);
+    s.settings.longFrom    = c.longFrom === "far" ? "far" : "10";
+    if(s.settings.windowMeals <= s.settings.maxPer) s.settings.windowMeals = s.settings.maxPer + 1;
   }
   return s;
 }
@@ -291,49 +316,81 @@ function setSync(live){
                           : "Saved in this browser only. Open the same link signed in to sync across devices.";
 }
 
-/* ---------- rules ---------- */
-function lastBefore(itemId, date){
-  var best=null;
-  for(var i=0;i<state.log.length;i++){ var e=state.log[i];
-    if(e.itemId===itemId && e.date < date && (!best || e.date>best)) best=e.date; }
-  return best;
+/* ---------- rules ----------
+   Every rule here counts LOGGED LUNCHES, never calendar days. A day you
+   didn't use the app does not exist: skipping Tuesday advances nothing,
+   so Monday's lunch is still "your last lunch" when you open it Wednesday. */
+var WALK_ORDER = ["5", "10", "far"];
+var WALK_FULL  = { "5":"Under 5 min walk", "10":"5-10 min walk", "far":"Over 10 min walk" };
+var WALK_PILL  = { "5":"<5 min", "10":"5-10", "far":">10 min" };
+
+function sequence(before){
+  return state.log.filter(function(e){ return e.date < before; })
+                  .sort(function(a, b){ return a.date < b.date ? 1 : -1; });
 }
-function weekCount(itemId, date){
-  var from = shift(date,-6), n=0;
-  for(var i=0;i<state.log.length;i++){ var e=state.log[i];
-    if(e.itemId===itemId && e.date>=from && e.date<=date) n++; }
+function entryWalk(e){
+  if(e.walk) return e.walk;                       /* snapshot taken when logged */
+  var it = state.items.filter(function(i){ return i.id === e.itemId; })[0];
+  return it ? it.walk : "10";
+}
+function sinceLast(itemId, seq){
+  for(var i = 0; i < seq.length; i++) if(seq[i].itemId === itemId) return i;
+  return Infinity;
+}
+function countInWindow(itemId, seq){
+  var c = 0, lim = Math.min(state.settings.windowMeals, seq.length);
+  for(var i = 0; i < lim; i++) if(seq[i].itemId === itemId) c++;
+  return c;
+}
+function isLong(walk){
+  return state.settings.longFrom === "10" ? (walk === "10" || walk === "far") : walk === "far";
+}
+function longRun(seq){                            /* long walks at the head of the sequence */
+  var n = 0;
+  for(var i = 0; i < seq.length; i++){ if(isLong(entryWalk(seq[i]))) n++; else break; }
   return n;
 }
-/* tier 1 = clears both rules · 2 = weekly cap full · 3 = inside the cooldown */
-function judge(item, date){
-  var le = lastBefore(item.id, date);
-  var gap = le ? span(le,date) : 9999;
-  var cnt = weekCount(item.id, date);
-  var coolDown = gap < state.settings.minGap;
-  var capped = cnt >= state.settings.maxPerWeek;
-  return { last:le, gap:gap, count:cnt, coolDown:coolDown, capped:capped, tier: coolDown?3:(capped?2:1) };
+function lunchesAgo(n){
+  return n === Infinity ? "Never logged" : n === 0 ? "Your last lunch"
+       : n === 1 ? "1 lunch ago" : n + " lunches ago";
 }
-function weighted(pool, date){
+
+/* tier 1 clears everything - 2 frequency cap full - 3 too many long walks
+   back to back - 4 inside the repeat cooldown. Bend in that order: walking
+   far again is a smaller insult than eating the same thing twice running. */
+function judge(item, date, seq){
+  seq = seq || sequence(date);
+  var s = state.settings;
+  var since = sinceLast(item.id, seq);
+  var count = countInWindow(item.id, seq);
+  var run   = longRun(seq);
+  var gap   = since < s.gapMeals;
+  var cap   = count >= s.maxPer;
+  var walk  = isLong(item.walk) && run >= s.maxLongRun;
+  return { since:since, count:count, run:run, gap:gap, cap:cap, walk:walk,
+           tier: gap ? 4 : walk ? 3 : cap ? 2 : 1 };
+}
+function weighted(pool){
   var w = pool.map(function(x){
-    var d = x.v.last ? span(x.v.last,date) : 21;
-    var recency = 1 + Math.min(d,21)/3;                 /* 1 → 8 as it goes stale */
-    var fatigue = Math.pow(0.6, Math.min(x.item.rejects||0, 6));
-    return Math.max(0.05, recency*fatigue);
+    var stale   = x.v.since === Infinity ? 12 : Math.min(x.v.since, 12);
+    var fatigue = Math.pow(0.6, Math.min(x.item.rejects || 0, 6));
+    return Math.max(0.05, (1 + stale) * fatigue);
   });
-  var sum = w.reduce(function(a,b){ return a+b; },0), r = Math.random()*sum;
-  for(var i=0;i<pool.length;i++){ r-=w[i]; if(r<=0) return pool[i]; }
-  return pool[pool.length-1];
+  var sum = w.reduce(function(a, b){ return a + b; }, 0), r = Math.random() * sum;
+  for(var i = 0; i < pool.length; i++){ r -= w[i]; if(r <= 0) return pool[i]; }
+  return pool[pool.length - 1];
 }
 function choose(date, skipIds){
   var live = state.items.filter(function(i){ return !i.archived; });
   if(!live.length) return null;
-  var pool = live.filter(function(i){ return skipIds.indexOf(i.id)<0; });
+  var pool = live.filter(function(i){ return skipIds.indexOf(i.id) < 0; });
   var exhausted = false;
-  if(!pool.length){ pool = live; exhausted = true; }          /* you turned everything down */
-  var scored = pool.map(function(i){ return { item:i, v:judge(i,date) }; });
-  for(var t=1;t<=3;t++){
-    var tier = scored.filter(function(x){ return x.v.tier===t; });
-    if(tier.length){ var win = weighted(tier,date); win.exhausted = exhausted; return win; }
+  if(!pool.length){ pool = live; exhausted = true; }   /* you turned down everything */
+  var seq = sequence(date);
+  var scored = pool.map(function(i){ return { item:i, v:judge(i, date, seq) }; });
+  for(var t = 1; t <= 4; t++){
+    var tier = scored.filter(function(x){ return x.v.tier === t; });
+    if(tier.length){ var win = weighted(tier); win.exhausted = exhausted; return win; }
   }
   return null;
 }
@@ -345,12 +402,12 @@ function ensurePick(date){
   var d = dayOf(date);
   if(d.decided) return null;
   if(d.pickId){
-    var still = state.items.filter(function(i){ return i.id===d.pickId && !i.archived; })[0];
-    if(still) return { item:still, v:judge(still,date), exhausted:false };
+    var still = state.items.filter(function(i){ return i.id === d.pickId && !i.archived; })[0];
+    if(still) return { item:still, v:judge(still, date), exhausted:false };
   }
   var c = choose(date, d.rejected);
   d.pickId = c ? c.item.id : null;
-  if(c) push();                       /* same pick if you reopen the app */
+  if(c) push();                                        /* same pick if you reopen */
   return c;
 }
 
@@ -358,26 +415,26 @@ function ensurePick(date){
 function reject(){
   var d = dayOf(view);
   if(!d.pickId) return;
-  var it = state.items.filter(function(i){ return i.id===d.pickId; })[0];
-  if(it) it.rejects = (it.rejects||0)+1;
-  if(d.rejected.indexOf(d.pickId)<0) d.rejected.push(d.pickId);
+  var it = state.items.filter(function(i){ return i.id === d.pickId; })[0];
+  if(it) it.rejects = (it.rejects || 0) + 1;
+  if(d.rejected.indexOf(d.pickId) < 0) d.rejected.push(d.pickId);
   d.pickId = null;
   save();
 }
 function accept(){
   var d = dayOf(view);
   if(!d.pickId) return;
-  var it = state.items.filter(function(i){ return i.id===d.pickId; })[0];
+  var it = state.items.filter(function(i){ return i.id === d.pickId; })[0];
   if(!it) return;
-  state.log = state.log.filter(function(e){ return e.date!==view; });
-  state.log.unshift({ date:view, itemId:it.id, name:it.name });
-  state.log = state.log.slice(0,400);
+  state.log = state.log.filter(function(e){ return e.date !== view; });
+  state.log.unshift({ date:view, itemId:it.id, name:it.name, walk:it.walk });
+  state.log = state.log.slice(0, 400);
   d.decided = it.id;
   save();
 }
-function skipDay(){ var d=dayOf(view); state.log = state.log.filter(function(e){ return e.date!==view; }); d.decided="skip"; save(); }
-function undo(){ var d=dayOf(view); d.decided=null; d.rejected=[]; state.log = state.log.filter(function(e){ return e.date!==view; }); save(); }
-function reshuffle(){ var d=dayOf(view); d.rejected=[]; d.pickId=null; save(); }
+function skipDay(){ var d = dayOf(view); state.log = state.log.filter(function(e){ return e.date !== view; }); d.decided = "skip"; save(); }
+function undo(){ var d = dayOf(view); d.decided = null; d.rejected = []; state.log = state.log.filter(function(e){ return e.date !== view; }); save(); }
+function reshuffle(){ var d = dayOf(view); d.rejected = []; d.pickId = null; save(); }
 
 /* ---------- render ---------- */
 function render(){
@@ -396,52 +453,57 @@ function render(){
 function setupHTML(){
   return '<div class="setup">'
     + '<h2>What do you actually eat?</h2>'
-    + '<p>One place per line. Add or remove them any time — eight to twelve gives the rules enough room to breathe.</p>'
+    + '<p>One place per line. You can set walking times afterwards under Places, and add or remove them any time.</p>'
     + '<textarea id="seed" spellcheck="false" placeholder="e.g.\nSweetgreen\nHalal Guys\nJoe&#39;s Pizza\nChipotle\nRamen Danbo"></textarea>'
     + '<button class="primary" id="seedGo">Save my list</button></div>';
 }
 
 function pickHTML(c){
-  var v = c.v, chips = [];
-  chips.push('<span class="chip">'+(v.last ? "Last had it "+ago(v.gap) : "Never logged")+'</span>');
-  chips.push('<span class="chip">'+v.count+' of '+state.settings.maxPerWeek+' this week</span>');
-  if(v.tier===2) chips.push('<span class="chip warn">Bending the '+state.settings.maxPerWeek+'× weekly cap</span>');
-  if(v.tier===3) chips.push('<span class="chip warn">Inside the '+state.settings.minGap+'-day cooldown</span>');
+  var v = c.v, s = state.settings, chips = [];
+  chips.push('<span class="chip walk">' + WALK_FULL[c.item.walk] + '</span>');
+  chips.push('<span class="chip">' + lunchesAgo(v.since) + '</span>');
+  chips.push('<span class="chip">' + v.count + ' of ' + s.maxPer + ' in your last ' + s.windowMeals + '</span>');
+  if(v.tier === 2) chips.push('<span class="chip warn">Bending the ' + s.maxPer + '-in-' + s.windowMeals + ' cap</span>');
+  if(v.tier === 3) chips.push('<span class="chip warn">' + v.run + ' long walks running already</span>');
+  if(v.tier === 4) chips.push('<span class="chip warn">Inside the repeat cooldown</span>');
   if(c.exhausted) chips.push('<span class="chip warn">You turned down everything else</span>');
 
   var d = dayOf(view);
-  var turned = d.rejected.length ? ' · <b>'+d.rejected.length+' passed</b>' : '';
+  var turned = d.rejected.length ? ' · <b>' + d.rejected.length + ' passed</b>' : '';
   return '<div class="stage"><div class="card" id="card">'
       + '<div class="veil left" id="veilL">Pass</div><div class="veil right" id="veilR">Going</div>'
-      + '<p class="eyebrow">'+esc(label(view))+' · '+esc(weekday(view))+' lunch'+turned+'</p>'
-      + '<h1 class="pick">'+esc(c.item.name)+'</h1>'
-      + '<div class="chips">'+chips.join("")+'</div>'
+      + '<p class="eyebrow">' + esc(label(view)) + ' · ' + esc(weekday(view)) + ' lunch' + turned + '</p>'
+      + '<h1 class="pick">' + esc(c.item.name) + '</h1>'
+      + '<div class="chips">' + chips.join("") + '</div>'
       + '<p class="hint">Swipe · or tap below</p>'
     + '</div></div>'
     + '<div class="acts">'
       + '<button class="act no" id="bNo">Not this<small>swipe left</small></button>'
       + '<button class="act yes" id="bYes">Going<small>swipe right</small></button>'
     + '</div>'
-    + '<button class="ghost" id="bSkip">Not eating out '+(view===today()?"today":"that day")+'</button>';
+    + '<button class="ghost" id="bSkip">Not eating out ' + (view === today() ? "today" : "that day") + '</button>';
 }
 
 function decidedHTML(d){
-  var name = d.decided==="skip" ? null : (state.log.filter(function(e){ return e.date===view; })[0]||{}).name;
-  var tmr = shift(today(),1);
+  var e = state.log.filter(function(x){ return x.date === view; })[0];
+  var name = d.decided === "skip" ? null : (e || {}).name;
+  var tmr = shift(today(), 1);
   return '<div class="stage"><div class="card">'
-      + '<p class="eyebrow">'+esc(label(view))+' · <b>Locked in</b></p>'
-      + '<h1 class="pick">'+(name ? esc(name) : "Eating in")+'</h1>'
-      + '<div class="chips"><span class="chip">'+(name?"Logged against your rules":"No entry logged")+'</span></div>'
+      + '<p class="eyebrow">' + esc(label(view)) + ' · <b>Locked in</b></p>'
+      + '<h1 class="pick">' + (name ? esc(name) : "Eating in") + '</h1>'
+      + '<div class="chips">' + (name
+          ? '<span class="chip walk">' + WALK_FULL[entryWalk(e)] + '</span><span class="chip">Counted in your rules</span>'
+          : '<span class="chip">Not counted — this day is skipped</span>') + '</div>'
     + '</div></div>'
     + '<div class="acts">'
       + '<button class="act" id="bUndo">Undo<small>wrong call</small></button>'
-      + '<button class="act" id="bNext">'+(view===today()?"Plan tomorrow":"Back to today")+'<small>'+(view===today()?esc(weekday(tmr)):esc(weekday(today())))+'</small></button>'
+      + '<button class="act" id="bNext">' + (view === today() ? "Plan tomorrow" : "Back to today") + '<small>' + (view === today() ? esc(weekday(tmr)) : esc(weekday(today()))) + '</small></button>'
     + '</div>';
 }
 
 function stuckHTML(){
   return '<div class="stage"><div class="card">'
-      + '<p class="eyebrow">'+esc(label(view))+' · <b>Nothing left</b></p>'
+      + '<p class="eyebrow">' + esc(label(view)) + ' · <b>Nothing left</b></p>'
       + '<h1 class="pick">Out of options</h1>'
       + '<div class="chips"><span class="chip warn">Every place is archived</span></div>'
     + '</div></div>'
@@ -452,36 +514,37 @@ function stuckHTML(){
 function arm(){
   var card = $("#card"); if(!card) return;
   var L = $("#veilL"), R = $("#veilR");
-  var x0=0, y0=0, dx=0, drag=false, locked=false;
+  var x0 = 0, y0 = 0, dx = 0, drag = false, locked = false;
 
   card.addEventListener("pointerdown", function(e){
-    if(e.pointerType==="mouse" && e.button!==0) return;
-    drag=true; locked=false; x0=e.clientX; y0=e.clientY; dx=0;
+    if(e.pointerType === "mouse" && e.button !== 0) return;
+    drag = true; locked = false; x0 = e.clientX; y0 = e.clientY; dx = 0;
     card.classList.remove("settle");
   });
   card.addEventListener("pointermove", function(e){
     if(!drag) return;
-    var mx=e.clientX-x0, my=e.clientY-y0;
-    if(!locked){ if(Math.abs(mx)<8 && Math.abs(my)<8) return;
-      if(Math.abs(my)>Math.abs(mx)){ drag=false; return; }        /* let the page scroll */
-      locked=true; card.setPointerCapture(e.pointerId); }
-    dx=mx;
-    card.style.transform = "translateX("+dx+"px) rotate("+(dx/26)+"deg)";
-    L.style.opacity = dx<0 ? Math.min(1, -dx/110) : 0;
-    R.style.opacity = dx>0 ? Math.min(1,  dx/110) : 0;
+    var mx = e.clientX - x0, my = e.clientY - y0;
+    if(!locked){
+      if(Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      if(Math.abs(my) > Math.abs(mx)){ drag = false; return; }   /* let the page scroll */
+      locked = true; card.setPointerCapture(e.pointerId);
+    }
+    dx = mx;
+    card.style.transform = "translateX(" + dx + "px) rotate(" + (dx / 26) + "deg)";
+    L.style.opacity = dx < 0 ? Math.min(1, -dx / 110) : 0;
+    R.style.opacity = dx > 0 ? Math.min(1,  dx / 110) : 0;
   });
   function release(){
-    if(!drag) return; drag=false;
-    var hit = Math.abs(dx) > 92;
-    if(hit){
+    if(!drag) return; drag = false;
+    if(Math.abs(dx) > 92){
       card.classList.add("gone");
-      card.style.transform = "translateX("+(dx>0?window.innerWidth:-window.innerWidth)+"px) rotate("+(dx/16)+"deg)";
+      card.style.transform = "translateX(" + (dx > 0 ? window.innerWidth : -window.innerWidth) + "px) rotate(" + (dx / 16) + "deg)";
       card.style.opacity = "0";
-      var go = dx>0 ? accept : reject;
+      var go = dx > 0 ? accept : reject;
       setTimeout(go, 190);
     } else {
       card.classList.add("settle");
-      card.style.transform=""; L.style.opacity=0; R.style.opacity=0;
+      card.style.transform = ""; L.style.opacity = 0; R.style.opacity = 0;
     }
   }
   card.addEventListener("pointerup", release);
@@ -493,59 +556,76 @@ var openSheet = null;
 function sheet(kind){
   openSheet = kind;
   var titles = { places:"Your places", history:"What you ate", rules:"Rules & backup" };
-  var body = kind==="places" ? placesHTML() : kind==="history" ? historyHTML() : rulesHTML();
-  $("#sheet").innerHTML = '<div class="scrim" id="scrim"></div><div class="sheet sheet-in" role="dialog" aria-modal="true" aria-label="'+titles[kind]+'">'
-    + '<div class="sheet-hd"><h3>'+titles[kind]+'</h3><button class="x" id="close">Done</button></div>'
-    + '<div class="sheet-bd">'+body+'</div></div>';
+  var body = kind === "places" ? placesHTML() : kind === "history" ? historyHTML() : rulesHTML();
+  $("#sheet").innerHTML = '<div class="scrim" id="scrim"></div><div class="sheet sheet-in" role="dialog" aria-modal="true" aria-label="' + titles[kind] + '">'
+    + '<div class="sheet-hd"><h3>' + titles[kind] + '</h3><button class="x" id="close">Done</button></div>'
+    + '<div class="sheet-bd">' + body + '</div></div>';
 }
-function closeSheet(){ openSheet=null; $("#sheet").innerHTML=""; }
+function closeSheet(){ openSheet = null; $("#sheet").innerHTML = ""; }
 function refresh(){ if(openSheet) sheet(openSheet); render(); }
 
 function placesHTML(){
-  var t = today();
+  var t = today(), seq = sequence(t), s = state.settings;
   var rows = state.items.map(function(i){
-    var v = judge(i,t);
+    var v = judge(i, t, seq);
     var pips = "";
-    for(var k=0;k<state.settings.maxPerWeek;k++) pips += '<span class="pip'+(k<v.count?" on":"")+'"></span>';
-    var bits = [ v.last ? "last "+ago(v.gap) : "never had" ];
-    if(v.coolDown) bits.push("<em>cooling down</em>");
-    else if(v.capped) bits.push("<em>capped this week</em>");
-    if((i.rejects||0)>=6) bits.push("<em>passed "+i.rejects+"×</em>");
+    for(var k = 0; k < s.maxPer; k++) pips += '<span class="pip' + (k < v.count ? " on" : "") + '"></span>';
+    var bits = [ lunchesAgo(v.since) ];
+    if(v.gap) bits.push("<em>cooling down</em>");
+    else if(v.walk) bits.push("<em>too many long walks</em>");
+    else if(v.cap) bits.push("<em>at the cap</em>");
+    if((i.rejects || 0) >= 6) bits.push("<em>passed " + i.rejects + "×</em>");
     return '<div class="row"><div class="row-main">'
-      + '<div class="row-name'+(i.archived?" off":"")+'">'+esc(i.name)+'</div>'
-      + '<div class="row-meta">'+bits.join(" · ")+'</div></div>'
-      + '<div class="pips" title="'+v.count+' of '+state.settings.maxPerWeek+' in the last 7 days">'+pips+'</div>'
-      + '<button class="mini'+(i.archived?"":" danger")+'" data-toggle="'+i.id+'">'+(i.archived?"Restore":"Archive")+'</button></div>';
+      + '<div class="row-name' + (i.archived ? " off" : "") + '">' + esc(i.name) + '</div>'
+      + '<div class="row-meta">' + bits.join(" · ") + '</div></div>'
+      + '<button class="mini walk' + (isLong(i.walk) ? " long" : "") + '" data-walk="' + i.id + '" title="Walking time — tap to change">' + WALK_PILL[i.walk] + '</button>'
+      + '<div class="pips" title="' + v.count + ' of ' + s.maxPer + ' in your last ' + s.windowMeals + ' lunches">' + pips + '</div>'
+      + '<button class="mini' + (i.archived ? "" : " danger") + '" data-toggle="' + i.id + '">' + (i.archived ? "Restore" : "Archive") + '</button></div>';
   }).join("");
   return '<div class="addbar"><input id="addName" placeholder="Add a place" autocomplete="off"><button id="addGo">Add</button></div>'
     + (rows || '<p class="empty">Nothing here yet.</p>')
+    + '<p class="sect">Walking time</p>'
+    + '<p class="note">Tap a place’s time pill to cycle it: under 5 min, 5-10, over 10. Highlighted pills count as a long walk under the rule below.</p>'
     + '<p class="sect">Archiving keeps the history</p>'
     + '<p class="note">Archive a place that has closed or that you are sick of — it stops being suggested but your past lunches stay counted.</p>';
 }
 
 function historyHTML(){
-  if(!state.log.length && !Object.keys(state.days).length) return '<p class="empty">No lunches logged yet.</p>';
-  var skips = Object.keys(state.days).filter(function(k){ return state.days[k].decided==="skip"; })
+  var skips = Object.keys(state.days).filter(function(k){ return state.days[k].decided === "skip"; })
     .map(function(k){ return { date:k, skip:true }; });
-  var all = state.log.concat(skips).sort(function(a,b){ return a.date<b.date?1:-1; }).slice(0,40);
+  var all = state.log.concat(skips).sort(function(a, b){ return a.date < b.date ? 1 : -1; }).slice(0, 40);
   if(!all.length) return '<p class="empty">No lunches logged yet.</p>';
+  var n = 0;
   var rows = all.map(function(e){
-    return '<div class="day"><span class="day-d">'+esc(label(e.date))+'</span>'
-      + '<span class="day-n'+(e.skip?" skip":"")+'">'+(e.skip?"ate in":esc(e.name))+'</span></div>';
+    var tag = e.skip ? '<span class="day-n skip">ate in — skipped</span>'
+      : '<span class="day-n">' + esc(e.name) + '</span><span class="day-w' + (isLong(entryWalk(e)) ? " long" : "") + '">' + WALK_PILL[entryWalk(e)] + '</span>';
+    if(!e.skip) n++;
+    return '<div class="day"><span class="day-d">' + esc(label(e.date)) + '</span>' + tag + '</div>';
   }).join("");
-  return rows + '<p class="sect">Counted in the rules</p><p class="note">Only logged lunches count. Passing on a suggestion never touches this list.</p>';
+  return rows
+    + '<p class="sect">' + n + ' logged ' + (n === 1 ? "lunch" : "lunches") + '</p>'
+    + '<p class="note">Only these count. Passing on a suggestion never writes here, and a skipped day is invisible to every rule — it does not break a streak or advance a cooldown.</p>';
 }
 
 function rulesHTML(){
   var s = state.settings;
-  return '<div class="ctrl"><div class="ctrl-lab">Cooldown<small>Days before the same place can come back</small></div>'
-      + '<div class="stepper"><button data-step="minGap:-1">−</button><span>'+s.minGap+'</span><button data-step="minGap:1">+</button></div></div>'
-    + '<div class="ctrl"><div class="ctrl-lab">Weekly cap<small>Most times in any rolling 7 days</small></div>'
-      + '<div class="stepper"><button data-step="maxPerWeek:-1">−</button><span>'+s.maxPerWeek+'</span><button data-step="maxPerWeek:1">+</button></div></div>'
+  return '<div class="ctrl"><div class="ctrl-lab">Repeat cooldown<small>Other lunches before the same place returns</small></div>'
+      + '<div class="stepper"><button data-step="gapMeals:-1">−</button><span>' + s.gapMeals + '</span><button data-step="gapMeals:1">+</button></div></div>'
+    + '<div class="ctrl"><div class="ctrl-lab">Frequency cap<small>Most times in your last ' + s.windowMeals + ' lunches</small></div>'
+      + '<div class="stepper"><button data-step="maxPer:-1">−</button><span>' + s.maxPer + '</span><button data-step="maxPer:1">+</button></div></div>'
+    + '<div class="ctrl"><div class="ctrl-lab">Window<small>How many recent lunches that cap looks at</small></div>'
+      + '<div class="stepper"><button data-step="windowMeals:-1">−</button><span>' + s.windowMeals + '</span><button data-step="windowMeals:1">+</button></div></div>'
+    + '<div class="ctrl"><div class="ctrl-lab">Long walks in a row<small>Block another once this many ran back to back</small></div>'
+      + '<div class="stepper"><button data-step="maxLongRun:-1">−</button><span>' + s.maxLongRun + '</span><button data-step="maxLongRun:1">+</button></div></div>'
+    + '<div class="ctrl"><div class="ctrl-lab">A long walk means<small>Which places that rule applies to</small></div>'
+      + '<div class="seg"><button data-long="10" class="' + (s.longFrom === "10" ? "on" : "") + '">5 min+</button>'
+      + '<button data-long="far" class="' + (s.longFrom === "far" ? "on" : "") + '">10 min+</button></div></div>'
+    + '<p class="sect">Days you skip do not exist</p>'
+    + '<p class="note">Every number here counts logged lunches, not dates. If you don’t use the app on Tuesday, Monday’s lunch is still your last one on Wednesday — nothing decays while you are away.</p>'
     + '<p class="sect">When the rules run out</p>'
-    + '<p class="note">With a short list every option can get blocked. Rather than refuse, the card bends one rule at a time and says so: first the weekly cap, then the cooldown. If you see that a lot, add a few more places.</p>'
+    + '<p class="note">With a short list every option can get blocked. Rather than refuse, the card bends one rule at a time and says so: the frequency cap first, then the long-walk streak, and the repeat cooldown last.</p>'
     + '<p class="sect">Backup</p>'
-    + '<p class="note" style="margin-bottom:10px">Your list and history live with your Claude account, so your phone and laptop stay in step. Keep a copy anyway.</p>'
+    + '<p class="note" style="margin-bottom:10px">Your list and history live in this browser only. Keep a copy.</p>'
     + '<div class="addbar"><button id="dl" style="flex:1; background:var(--card); color:var(--ink); border:1px solid var(--rule); padding:11px">Download JSON</button>'
     + '<button id="cp" style="flex:1; background:var(--card); color:var(--ink); border:1px solid var(--rule); padding:11px">Copy</button></div>';
 }
@@ -558,6 +638,11 @@ function fileSave(text, name){
     setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 1000);
     toast("Saved");
   }catch(e){ toast("Could not save — use Copy"); }
+}
+function repick(){
+  var d = dayOf(view);
+  if(!d.decided) d.pickId = null;       /* a changed rule can invalidate today's pick */
+  push(); refresh();
 }
 function toast(msg){
   $("#toast").innerHTML = '<div class="toast">'+esc(msg)+'</div>';
@@ -576,7 +661,7 @@ document.addEventListener("click", function(e){
     var lines = ($("#seed").value||"").split("\n").map(function(s){ return s.trim(); }).filter(Boolean);
     var seen = {};
     lines.forEach(function(n){ var k=n.toLowerCase(); if(seen[k]) return; seen[k]=1;
-      state.items.push({ id:uid(), name:n.slice(0,80), tags:[], rejects:0, archived:false }); });
+      state.items.push({ id:uid(), name:n.slice(0,80), tags:[], walk:"10", rejects:0, archived:false }); });
     if(!state.items.length) return toast("Add at least one place");
     return save();
   }
@@ -590,7 +675,7 @@ document.addEventListener("click", function(e){
   if(id==="addGo"){
     var inp = $("#addName"), n = (inp.value||"").trim();
     if(!n) return;
-    state.items.push({ id:uid(), name:n.slice(0,80), tags:[], rejects:0, archived:false });
+    state.items.push({ id:uid(), name:n.slice(0,80), tags:[], walk:"10", rejects:0, archived:false });
     inp.value=""; push(); refresh(); return;
   }
   if(el.dataset.toggle){
@@ -598,12 +683,24 @@ document.addEventListener("click", function(e){
     if(it){ it.archived = !it.archived; var d=dayOf(view); if(it.archived && d.pickId===it.id) d.pickId=null; }
     push(); refresh(); return;
   }
+  if(el.dataset.walk){
+    var wit = state.items.filter(function(i){ return i.id===el.dataset.walk; })[0];
+    if(wit) wit.walk = WALK_ORDER[(WALK_ORDER.indexOf(wit.walk)+1) % WALK_ORDER.length];
+    repick(); return;
+  }
+  if(el.dataset.long){
+    state.settings.longFrom = el.dataset.long === "far" ? "far" : "10";
+    repick(); return;
+  }
   if(el.dataset.step){
     var p = el.dataset.step.split(":"), key=p[0], delta=+p[1];
-    var lim = key==="minGap" ? [0,7] : [1,7];
+    var LIM = { gapMeals:[0,6], maxPer:[1,9], windowMeals:[2,20], maxLongRun:[1,6] };
+    var lim = LIM[key] || [0,9];
     state.settings[key] = Math.min(lim[1], Math.max(lim[0], state.settings[key]+delta));
-    var dd=dayOf(view); if(!dd.decided) dd.pickId=null;
-    push(); refresh(); return;
+    /* the cap is meaningless once the window is no wider than it */
+    if(state.settings.windowMeals <= state.settings.maxPer)
+      state.settings.windowMeals = Math.min(20, state.settings.maxPer + 1);
+    repick(); return;
   }
   if(id==="dl" || id==="cp"){
     var json = JSON.stringify(state, null, 2);
