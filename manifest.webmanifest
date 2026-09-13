@@ -1,0 +1,16 @@
+{
+  "name": "Lunch Call",
+  "short_name": "Lunch",
+  "description": "A lunch picker that won't let you eat the same thing twice in two days.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F0F1EC",
+  "theme_color": "#B8770F",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
